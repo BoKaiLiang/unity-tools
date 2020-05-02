@@ -3,12 +3,13 @@ using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
 
+
 namespace PKTools.Timer
 {
     public enum Counting
     {
-        CountDown,
-        CountUp
+        Down,
+        Up
     };
 
     public class TimerEvent
@@ -27,11 +28,9 @@ namespace PKTools.Timer
         public bool IsActive { get; private set; }
 
         private bool autoKill { get; set; }
+        private Counting counting { get; set; }
 
-        // From zero or duration
-        private Counting counting = Counting.CountDown;
-
-        private Action<float> onUpdate;     // pass elapsed time / remaining time
+        private Action<float> onUpdate;     // pass elapsed time/remaining time
         private Action onPause;
         private Action onResume;
         private Action onComplete;
@@ -41,19 +40,9 @@ namespace PKTools.Timer
 
         private TimerEvent() { }
 
-        /// <summary>
-        /// Default timer event is set as "counting down" and "not auto-kill".
-        /// After create, should invoke "Play()" to active the timer.
-        /// </summary>
-        /// <param name="tag"></param>
-        /// <returns></returns>
-        public static TimerEvent Create(string tag, float duration)
+        public static TimerEvent Create(Counting counting, float duration, string tag = "UNNAMED TIMER")
         {
-            if (tag == null || tag == string.Empty)
-            {
-                throw new ArgumentException("Tag can't be null or empty.");
-            }
-
+            // Create Timer Manager if there is not on scene.
             if (timerManager == null)
             {
                 TimerManager managerInScene = UnityEngine.Object.FindObjectOfType<TimerManager>();
@@ -68,24 +57,56 @@ namespace PKTools.Timer
                 }
             }
 
-            TimerEvent timer = new TimerEvent();
-            timer.Tag = tag;
-            timer.Duration = duration;
-            timer.RemainingTime = duration;
-            timer.ElaspedTime = 0.0f;
+            int flag = 0;
+            string modifyTag = tag;
 
-            timerManager.AddTimerEvent(timer.Tag, timer);
+            while (timerManager.dictTimerEvents.ContainsKey(modifyTag))
+            {
+                flag++;
+                StringBuilder stringBuilder = new StringBuilder(tag);
+                stringBuilder.Append("(" + flag + ")".ToString());
+                modifyTag = stringBuilder.ToString();
+                Debug.LogWarning("[TIMER EVENT] : \"" + tag + "\" is repeated.");
+            }
+
+            TimerEvent timer = new TimerEvent()
+            {
+                Tag = modifyTag,
+                Duration = duration,
+                RemainingTime = duration,
+                ElaspedTime = 0.0f,
+                IsComplete = false,
+                IsActive = false,
+                IsPause = false,
+                IsCancel = false,
+                
+                autoKill = false,
+                counting = counting,
+                onUpdate = null,
+                onPause = null,
+                onResume = null,
+                onComplete = null,
+                onCancel = null
+            };
+
+            timerManager.AddTimerEvent(modifyTag, timer);
 
             return timer;
         }
 
-        public TimerEvent Play()
+        public static TimerEvent Get(string tag)
         {
-            if (Duration <= 0.0f)
-            {
-                throw new InvalidOperationException("Setup Duration is: " + Duration.ToString());
+            TimerEvent timerEvent;
+
+            if (!timerManager.dictTimerEvents.TryGetValue(tag, out timerEvent)) {
+                throw new ArgumentException("[TIMER EVENT] : \"" + tag + "\" not found.");
             }
 
+            return timerEvent;
+        }
+
+        public TimerEvent Play()
+        {
             RemainingTime = Duration;
             ElaspedTime = 0.0f;
 
@@ -99,7 +120,7 @@ namespace PKTools.Timer
 
         public TimerEvent Pause()
         {
-            if (!IsPause)
+            if (!IsPause && !IsCancel && IsActive)
             {
                 IsPause = true;
                 onPause?.Invoke();
@@ -109,7 +130,7 @@ namespace PKTools.Timer
 
         public TimerEvent Resume()
         {
-            if (IsPause)
+            if (IsPause && !IsCancel && IsActive)
             {
                 IsPause = false;
                 onResume?.Invoke();
@@ -119,7 +140,7 @@ namespace PKTools.Timer
 
         public TimerEvent Cancel()
         {
-            if (!IsCancel)
+            if (!IsCancel && IsActive)
             {
                 IsCancel = true;
                 IsActive = false;
@@ -129,36 +150,11 @@ namespace PKTools.Timer
             return this;
         }
 
-        public TimerEvent SetCountingWay(Counting counting)
-        {
-            this.counting = counting;
-
-            return this;
-        }
-
         public TimerEvent SetAutoKill(bool autoKill)
         {
             this.autoKill = autoKill;
 
             return this;
-        }
-
-        public static TimerEvent GetTimer(string tag)
-        {
-            TimerEvent timerEvent;
-            bool tryToGet = timerManager.dictTimerEvents.TryGetValue(tag, out timerEvent);
-
-            if (tryToGet == false)
-            {
-                throw new NullReferenceException("Can not find the register timer event: \"" + tag + "\".");
-            }
-
-            return timerEvent;
-        }
-
-        public static void Destroy(string tag)
-        {
-            timerManager.dictTimerEvents.Remove(tag);
         }
 
         public TimerEvent OnUpdate(Action<float> updateAction)
@@ -205,11 +201,11 @@ namespace PKTools.Timer
 
             if (!IsPause && IsActive)
             {
-                if (counting == Counting.CountDown)
+                if (counting == Counting.Down)
                 {
                     timerCountDown(Time.deltaTime);
                 }
-                else if (counting == Counting.CountUp)
+                else if (counting == Counting.Up)
                 {
                     timerCountUp(Time.deltaTime);
                 }
@@ -256,11 +252,6 @@ namespace PKTools.Timer
         {
             private Queue<string> completeTimers = new Queue<string>();
             public Dictionary<string, TimerEvent> dictTimerEvents = new Dictionary<string, TimerEvent>();
-
-            private void Start()
-            {
-                DontDestroyOnLoad(this);
-            }
 
             public void AddTimerEvent(string tag, TimerEvent timerEvent)
             {
